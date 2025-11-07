@@ -1,0 +1,17 @@
+coord_system: cartesian
+data_filepath: ./saved_meshes_franka
+dof: 4
+gamma: 0.5
+if_cuda: true
+if_test: false
+log_dir: logs_state-condition_franka-full_1
+loss_type: siren_sdf
+lr: 5.0e-05
+lr_schedule:
+- 10000000
+model_name: state-condition
+num_workers: 8
+seed: 1
+test_batch: 4800
+train_batch: 4800
+val_batch: 4800

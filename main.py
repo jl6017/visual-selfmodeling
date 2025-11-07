@@ -6,7 +6,10 @@ import torch
 import pprint
 from munch import munchify
 from models import VisModelingModel
-from pytorch_lightning.plugins import DDPPlugin
+try:
+    from pytorch_lightning.plugins import DDPPlugin
+except Exception:
+    DDPPlugin = None
 from pytorch_lightning import Trainer, seed_everything
 from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning.callbacks import ModelCheckpoint
@@ -34,6 +37,13 @@ def main():
     seed(cfg)
     seed_everything(cfg.seed)
 
+    # If CUDA is available and requested, set a reasonable matmul precision for Tensor Cores (best-effort)
+    try:
+        if cfg.if_cuda and torch.cuda.is_available():
+            torch.set_float32_matmul_precision('medium')
+    except Exception:
+        pass
+
     log_dir = '_'.join([cfg.log_dir,
                         cfg.model_name,
                         cfg.tag,
@@ -56,12 +66,19 @@ def main():
                              coord_system=cfg.coord_system,
                              lr_schedule=cfg.lr_schedule)
 
+    # prepare TensorBoard logger explicitly to avoid CSVLogger fallback warning
+    try:
+        tb_logger = TensorBoardLogger(save_dir=log_dir, name='')
+    except Exception:
+        tb_logger = None
+
     # define trainer
-    trainer = Trainer(gpus=cfg.num_gpus,
-                      max_epochs=cfg.epochs,
+    trainer_plugins = DDPPlugin(find_unused_parameters=False) if DDPPlugin is not None else None
+    trainer = Trainer(max_epochs=cfg.epochs,
                       deterministic=True,
-                      plugins=DDPPlugin(find_unused_parameters=False),
-                      amp_backend='native',
+                      plugins=trainer_plugins,
+                      logger=tb_logger,
+                      log_every_n_steps=1,
                       default_root_dir=log_dir)
 
     trainer.fit(model)
@@ -74,6 +91,13 @@ def main_kinematic():
     seed(cfg)
     seed_everything(cfg.seed)
 
+    # Try to set CUDA matmul precision for performance if available
+    try:
+        if cfg.if_cuda and torch.cuda.is_available():
+            torch.set_float32_matmul_precision('medium')
+    except Exception:
+        pass
+
     log_dir = '_'.join([cfg.log_dir,
                         cfg.model_name,
                         cfg.tag,
@@ -103,16 +127,19 @@ def main_kinematic():
         monitor='val_loss',
         mode='min',
         prefix='')
-    
-    # define trainer
-    trainer = Trainer(gpus=cfg.num_gpus,
-                      max_epochs=cfg.epochs,
+    try:
+        tb_logger = TensorBoardLogger(save_dir=log_dir, name='')
+    except Exception:
+        tb_logger = None
+
+    trainer_plugins = DDPPlugin(find_unused_parameters=False) if DDPPlugin is not None else None
+    trainer = Trainer(max_epochs=cfg.epochs,
                       deterministic=True,
-                      plugins=DDPPlugin(find_unused_parameters=False),
-                      amp_backend='native',
-                      default_root_dir=log_dir,
+                      plugins=trainer_plugins,
+                      logger=tb_logger,
                       val_check_interval=1.0,
-                      checkpoint_callback=checkpoint_callback)
+                      callbacks=[checkpoint_callback],
+                      default_root_dir=log_dir)
 
     model.extract_kinematic_encoder_model(sys.argv[3])
     trainer.fit(model)
@@ -125,6 +152,13 @@ def main_kinematic_scratch():
     seed(cfg)
     seed_everything(cfg.seed)
 
+    # Try to set CUDA matmul precision for performance if available
+    try:
+        if cfg.if_cuda and torch.cuda.is_available():
+            torch.set_float32_matmul_precision('medium')
+    except Exception:
+        pass
+
     log_dir = '_'.join([cfg.log_dir,
                         cfg.model_name,
                         cfg.tag,
@@ -154,16 +188,19 @@ def main_kinematic_scratch():
         monitor='val_loss',
         mode='min',
         prefix='')
-    
-    # define trainer
-    trainer = Trainer(gpus=cfg.num_gpus,
-                      max_epochs=cfg.epochs,
+    try:
+        tb_logger = TensorBoardLogger(save_dir=log_dir, name='')
+    except Exception:
+        tb_logger = None
+
+    trainer_plugins = DDPPlugin(find_unused_parameters=False) if DDPPlugin is not None else None
+    trainer = Trainer(max_epochs=cfg.epochs,
                       deterministic=True,
-                      plugins=DDPPlugin(find_unused_parameters=False),
-                      amp_backend='native',
-                      default_root_dir=log_dir,
+                      plugins=trainer_plugins,
+                      logger=tb_logger,
                       val_check_interval=1.0,
-                      checkpoint_callback=checkpoint_callback)
+                      callbacks=[checkpoint_callback],
+                      default_root_dir=log_dir)
                       
     trainer.fit(model)
 

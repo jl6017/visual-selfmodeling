@@ -137,7 +137,14 @@ class VisModelingModel(pl.LightningModule):
         else:
             pred = self.train_forward(data)
             train_loss = self.loss_func(pred, target)
-        self.log('train_loss', train_loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+        # Explicitly provide batch_size to avoid ambiguous-batch-size warnings
+        batch_size = None
+        if isinstance(data, dict):
+            if 'coords' in data:
+                batch_size = data['coords'].shape[0]
+            elif 'states' in data:
+                batch_size = data['states'].shape[0]
+        self.log('train_loss', train_loss, on_step=True, on_epoch=True, prog_bar=True, logger=True, batch_size=batch_size)
         return train_loss
 
     # def validation_step(self, batch, batch_idx):
@@ -163,13 +170,25 @@ class VisModelingModel(pl.LightningModule):
             kinematic_feat = self.state_condition_model.state_encoder(data['states'])
             pred = self.model(kinematic_feat)
             test_loss = self.loss_func(pred, target['target_states'])
-            self.log('test_loss', test_loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+            batch_size = None
+            if isinstance(data, dict):
+                if 'coords' in data:
+                    batch_size = data['coords'].shape[0]
+                elif 'states' in data:
+                    batch_size = data['states'].shape[0]
+            self.log('test_loss', test_loss, on_step=True, on_epoch=True, prog_bar=True, logger=True, batch_size=batch_size)
             return test_loss
         elif self.hparams.model_name == 'state-condition-kinematic-scratch':
             data, target = batch
             pred = self.model(data['states'])
             test_loss = self.loss_func(pred, target['target_states'])
-            self.log('test_loss', test_loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+            batch_size = None
+            if isinstance(data, dict):
+                if 'coords' in data:
+                    batch_size = data['coords'].shape[0]
+                elif 'states' in data:
+                    batch_size = data['states'].shape[0]
+            self.log('test_loss', test_loss, on_step=True, on_epoch=True, prog_bar=True, logger=True, batch_size=batch_size)
         else:
             pass
         
