@@ -20,8 +20,15 @@ class MultipleModel(Dataset):
 
     def get_all_filelist(self):
         filelist = []
-        with open(os.path.join('../assets', 'datainfo', f'multiple_models_data_split_dict_{self.seed}.json'), 'r') as file:
-            seq_dict = json.load(file)
+        # Prefer a split file residing in the pointcloud folder (allows per-dataset splits).
+        local_split = os.path.join(self.pointcloud_folder, f'multiple_models_data_split_dict_{self.seed}.json')
+        global_split = os.path.join('../assets', 'datainfo', f'multiple_models_data_split_dict_{self.seed}.json')
+        if os.path.exists(local_split):
+            with open(local_split, 'r') as file:
+                seq_dict = json.load(file)
+        else:
+            with open(global_split, 'r') as file:
+                seq_dict = json.load(file)
         id_lst = seq_dict[self.flag]
 
         for idx in id_lst:
@@ -57,7 +64,8 @@ class MultipleModel(Dataset):
         final_normals = np.concatenate((on_surface_normals, off_surface_normals), axis=0)
 
         # =====> robot state
-        index = self.all_filelist[idx].split('/')[-1].split('.')[0].split('_')[1]
+        filename = os.path.basename(self.all_filelist[idx])
+        index = filename.split('.')[0].split('_')[1]
         robot_state = self.robot_state_dict[index]
         sel_robot_state = np.array([robot_state[0][0], robot_state[1][0], robot_state[2][0], robot_state[3][0]])
         sel_robot_state = sel_robot_state / np.pi
@@ -118,7 +126,8 @@ class MultipleModelLink(Dataset):
     def __getitem__(self, idx):
 
         # =====> robot state
-        index = self.all_filelist[idx].split('/')[-1].split('.')[0].split('_')[1]
+        filename = os.path.basename(self.all_filelist[idx])
+        index = filename.split('.')[0].split('_')[1]
         robot_state = self.robot_state_dict[index]
         sel_robot_state = np.array([robot_state[0][0], robot_state[1][0], robot_state[2][0], robot_state[3][0]])
         tar_robot_state = np.array([robot_state[5][0], robot_state[5][1], robot_state[5][2]])
