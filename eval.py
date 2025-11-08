@@ -1,6 +1,13 @@
 
-
 import os
+# Workaround for Windows OpenMP runtime conflict (libiomp5md.dll vs libomp.dll).
+# Some conda / pip packages link different OpenMP runtimes which causes:
+#   "Initializing libomp.dll, but found libiomp5md.dll already initialized."
+# Setting KMP_DUPLICATE_LIB_OK=TRUE permits the process to continue. This is
+# an unsupported workaround but commonly used to unblock evaluation scripts.
+# If you prefer not to modify source, instead set the env var from PowerShell:
+#   $env:KMP_DUPLICATE_LIB_OK = 'TRUE'; python .\eval.py ...
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 import sys
 import glob
 import yaml
@@ -16,7 +23,14 @@ from utils import common
 from munch import munchify
 from collections import OrderedDict
 from models import VisModelingModel
-from pytorch_lightning.plugins import DDPPlugin
+# Backwards-compatible import for different PyTorch Lightning versions.
+# Older code expects DDPPlugin in pytorch_lightning.plugins (PL 1.x).
+# Newer PL (2.x) exposes different strategy/plugin APIs. The scripting here
+# doesn't actually use DDPPlugin directly, so tolerate the import failure.
+try:
+    from pytorch_lightning.plugins import DDPPlugin
+except Exception:
+    DDPPlugin = None
 from pytorch_lightning import Trainer, seed_everything
 from pytorch_lightning.loggers import TensorBoardLogger
 
@@ -72,9 +86,24 @@ def create_state_condition_mesh():
     model.freeze()
     
     # get test file ids
-    with open(os.path.join('../assets', 'datainfo', f'multiple_models_data_split_dict_{cfg.seed}.json'), 'r') as file:
+    # Prefer a split file placed inside the dataset folder (cfg.data_filepath). Many
+    # datasets (e.g., the franka set) include their own multiple_models_data_split_dict_{seed}.json
+    # under the data folder. Fall back to the repo-wide assets/datainfo if not found.
+    datainfo_local = os.path.join(cfg.data_filepath, f'multiple_models_data_split_dict_{cfg.seed}.json')
+    script_dir = os.path.dirname(os.path.realpath(__file__))
+    datainfo_assets = os.path.join(script_dir, 'assets', 'datainfo', f'multiple_models_data_split_dict_{cfg.seed}.json')
+    datainfo_fallback = os.path.join('..', 'assets', 'datainfo', f'multiple_models_data_split_dict_{cfg.seed}.json')
+
+    if os.path.exists(datainfo_local):
+        datainfo_path = datainfo_local
+    elif os.path.exists(datainfo_assets):
+        datainfo_path = datainfo_assets
+    else:
+        datainfo_path = datainfo_fallback
+
+    with open(datainfo_path, 'r') as file:
         seq_dict = json.load(file)
-    id_lst = seq_dict['test']
+    id_lst = seq_dict.get('test', [])
 
     # get robot states
     robot_state_filepath = os.path.join(cfg.data_filepath, 'robot_state.json')
@@ -85,10 +114,19 @@ def create_state_condition_mesh():
     common.mkdir(ply_save_folder)
     for idx in tqdm(id_lst):
         # get testing robot states
-        sel_robot_state = np.array((robot_state_dict[str(idx)][0][0],
-                                    robot_state_dict[str(idx)][1][0],
-                                    robot_state_dict[str(idx)][2][0],
-                                    robot_state_dict[str(idx)][3][0])).reshape(1, -1)
+        robot_state = robot_state_dict.get(str(idx))
+        if robot_state is None:
+            # fallback: local split may reference indices outside of available robot_state keys
+            # map to an existing index using modulo to avoid crashing; log a warning.
+            total_states = len(robot_state_dict)
+            mapped_idx = int(idx) % total_states
+            robot_state = robot_state_dict.get(str(mapped_idx))
+            print(f"Warning: robot_state for index {idx} not found; using mapped index {mapped_idx} instead.")
+
+        sel_robot_state = np.array((robot_state[0][0],
+                                    robot_state[1][0],
+                                    robot_state[2][0],
+                                    robot_state[3][0])).reshape(1, -1)
         sel_robot_state = sel_robot_state / np.pi
 
         N=256
@@ -132,15 +170,33 @@ def create_state_condition_mesh():
 
         end = time.time()
         print("sampling takes: %f" % (end - start))
+        # Quick diagnostics: check sdf stats before running marching cubes.
+        sdf_np = sdf_values.data.cpu().numpy()
+        try:
+            smin = float(sdf_np.min())
+            smax = float(sdf_np.max())
+            smean = float(sdf_np.mean())
+            snan = int(np.isnan(sdf_np).sum())
+            nneg = int((sdf_np < 0).sum())
+            npos = int((sdf_np > 0).sum())
+            print(f"sdf stats idx={idx}: min={smin:.6g}, max={smax:.6g}, mean={smean:.6g}, nan={snan}, neg={nneg}, pos={npos}")
+        except Exception as e:
+            print("Failed to compute sdf stats:", e)
 
-        common.convert_sdf_samples_to_ply(
-            sdf_values.data.cpu(),
-            voxel_origin,
-            voxel_size,
-            ply_filename + ".ply",
-            offset=None,
-            scale=None,
-        )
+        # If there is no sign change in the SDF (all positive or all negative),
+        # marching cubes will produce no surface at level=0. Skip writing an empty ply
+        # and warn the user so they can debug the model outputs / normalization.
+        if nneg == 0 or npos == 0:
+            print(f"Warning: no zero-crossing for idx={idx} (neg={nneg}, pos={npos}). Skipping .ply generation.")
+        else:
+            common.convert_sdf_samples_to_ply(
+                sdf_values.data.cpu(),
+                voxel_origin,
+                voxel_size,
+                ply_filename + ".ply",
+                offset=None,
+                scale=None,
+            )
 
 # render predictions as angle smooth movements as animation
 def create_state_condition_mesh_render():

@@ -9,7 +9,7 @@ test_batch: 4800
 task_batch: 9600
 num_workers: 8
 model_name: 'state-condition'
-data_filepath: './saved_meshes'
+data_filepath: './saved_meshes_franka'
 lr_schedule: [10000000]
 num_gpus: 1
 epochs: 2000
